@@ -10,7 +10,8 @@ import org.apache.commons.lang3.time.DateUtils;
 
 public class CaffeinateThread {
 
-	private static final int TINY_TIMEOUT = 3;
+	private static final int TINY_TIMEOUT = 2;
+	private static final int SMALL_TIMEOUT = 5;
 	private static final int DEFAULT_TIMEOUT = 10;
 	private static final int MEDIUM_TIMEOUT = 30;
 
@@ -51,13 +52,17 @@ public class CaffeinateThread {
 		this.caffeinate(TINY_TIMEOUT);
 	}
 
+	public void smallCaffeinate() {
+		this.caffeinate(SMALL_TIMEOUT);
+	}
+
 	public void mediumCaffeinate() {
 		this.caffeinate(MEDIUM_TIMEOUT);
 	}
 
 	public void caffeinate(int minutes) {
 		Date newUntil = DateUtils.addMinutes(new Date(), minutes);
-		if(runningProcessUntil != null && runningProcessUntil.after(newUntil)){
+		if(runningProcessUntil != null && runningProcessUntil != null && runningProcessUntil.after(newUntil)){
 			return;
 		}
 
@@ -65,7 +70,9 @@ public class CaffeinateThread {
 			int seconds = minutes * 60;
 			logger.info("Iniciando caffeinate -s -t " + minutes + " minutes");
 			Process exec = Runtime.getRuntime().exec("caffeinate -s -t " + seconds);
-			runningProcess.destroy();
+			if(runningProcess != null){
+				runningProcess.destroy();
+			}
 			runningProcess = exec;
 			runningProcessUntil = newUntil;
 
