@@ -8,17 +8,19 @@ import java.util.logging.Logger;
 
 import org.apache.commons.lang3.time.DateUtils;
 
-public class CaffeinateThread {
+public class CaffeinateRunner {
 
 	private static final int TINY_TIMEOUT = 2;
 	private static final int SMALL_TIMEOUT = 5;
 	private static final int DEFAULT_TIMEOUT = 10;
 	private static final int MEDIUM_TIMEOUT = 30;
 
-	private static Logger logger = Logger.getLogger(CaffeinateThread.class.getName());
+	private static Logger logger = Logger.getLogger(CaffeinateRunner.class.getName());
 
 	private Process runningProcess;
 	private Date runningProcessUntil;
+
+	private boolean processRunning = false;
 
 	private Map<String, Process> processes;
 
@@ -41,60 +43,85 @@ public class CaffeinateThread {
 	//	             is dropped after the specified timeout. Timeout value is not used when an utility is invoked
 	//	             with this command.
 
-	public CaffeinateThread() {
+	public CaffeinateRunner() {
 	}
 
-	public void caffeinate() {
-		this.caffeinate(DEFAULT_TIMEOUT);
+	public boolean caffeinate() {
+		return this.caffeinate(DEFAULT_TIMEOUT);
 	}
 
-	public void tinyCaffeinate() {
-		this.caffeinate(TINY_TIMEOUT);
+	public boolean caffeinateSeconds(int seconds) {
+		return this.caffeinate(true, seconds);
 	}
 
-	public void smallCaffeinate() {
-		this.caffeinate(SMALL_TIMEOUT);
+	public boolean tinyCaffeinate() {
+		return this.caffeinate(TINY_TIMEOUT);
 	}
 
-	public void mediumCaffeinate() {
-		this.caffeinate(MEDIUM_TIMEOUT);
+	public boolean smallCaffeinate() {
+		return this.caffeinate(SMALL_TIMEOUT);
 	}
 
-	public void caffeinate(int minutes) {
-		Date newUntil = DateUtils.addMinutes(new Date(), minutes);
-		if(runningProcessUntil != null && runningProcessUntil != null && runningProcessUntil.after(newUntil)){
-			return;
+	public boolean mediumCaffeinate() {
+		return this.caffeinate(MEDIUM_TIMEOUT);
+	}
+
+	public boolean caffeinate(int minutes) {
+		return this.caffeinate(false, minutes);
+	}
+
+	private boolean caffeinate(boolean seconds, int timeout) {
+		Date newUntil = DateUtils.addMinutes(new Date(), timeout);
+		if(processRunning && runningProcessUntil != null && runningProcessUntil.after(newUntil)){
+			return true;
 		}
 
 		try{
-			int seconds = minutes * 60;
-			logger.info("Iniciando caffeinate -s -t " + minutes + " minutes");
-			Process exec = Runtime.getRuntime().exec("caffeinate -s -t " + seconds);
+			if(!seconds){
+				timeout = timeout * 60;
+				logger.info("Starting caffeinate -s -t " + timeout + " minutes");
+			}else{
+				logger.info("Starting caffeinate -s -t " + timeout + " seconds");
+			}
+			Process exec = Runtime.getRuntime().exec("caffeinate -s -t " + timeout);
+			this.processRunning = true;
+
 			if(runningProcess != null){
 				runningProcess.destroy();
+				try {
+					runningProcess.waitFor();
+				} catch (InterruptedException e) {
+				}
 			}
+
+			new Thread(new CaffeinateNotifier(this, exec)).run();
+
 			runningProcess = exec;
 			runningProcessUntil = newUntil;
+			return true;
 
 		} catch (IOException e) {
 			e.printStackTrace();
+			return false;
 		}
 	}
 
-	public void cancelableCaffeinate(String name) {
+	public boolean cancelableCaffeinate(String name) {
 		if(processes == null){
 			processes = new HashMap<String, Process>();
 		}
 		if(processes.containsKey(name)){
-			return;
+			return false;
 		}
 		try{
 			Runtime r = Runtime.getRuntime();
-			logger.info("Iniciando caffeinate -s -t 3600");
+			logger.info("Starting caffeinate -s -t 3600");
 			processes.put(name, r.exec("caffeinate -s -t 3600"));
+			return true;
 
 		} catch (IOException e) {
 			e.printStackTrace();
+			return false;
 		}
 	}
 
@@ -105,9 +132,9 @@ public class CaffeinateThread {
 		processes.get(name).waitFor();
 	}
 
-	public void cancel(String name) {
+	public boolean cancel(String name) {
 		if(processes == null || !processes.containsKey(name)){
-			return;
+			return false;
 		}
 		synchronized (this) {
 			Process currentProcess = processes.get(name);
@@ -120,6 +147,32 @@ public class CaffeinateThread {
 				processes.remove(name);
 			}
 		}
+		return true;
 	}
 
+	private void setProcessNotRunning(int status) {
+		this.processRunning = false;
+		logger.info("Caffeinate exited");
+	}
+
+	public static class CaffeinateNotifier implements Runnable
+	{
+		private final CaffeinateRunner thread;
+		private final Process p;
+
+		public CaffeinateNotifier(CaffeinateRunner thread, Process p) {
+			this.thread = thread;
+			this.p = p;
+		}
+
+		@Override
+		public void run() {
+			int status = -1;
+			try {
+				status = p.waitFor();
+			} catch (InterruptedException e) {
+			}
+			this.thread.setProcessNotRunning(status);
+		}
+	}
 }
