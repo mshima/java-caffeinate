@@ -2,7 +2,7 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>br.net.shima.utils</groupId>
 	<artifactId>java-caffeinate</artifactId>
-	<version>0.1.2</version>
+	<version>0.1.3-SNAPSHOT</version>
 	<url>https://github.com/${github-user}/github-maven-example</url>
 
 	<issueManagement>
@@ -20,7 +20,7 @@
 		<url>https://github.com/${github-user}/${project.artifactId}</url>
 		<connection>scm:git:git://github.com/${github-user}/${project.artifactId}.git</connection>
 		<developerConnection>scm:git:git@github.com:${github-user}/${project.artifactId}.git</developerConnection>
-		<tag>java-caffeinate-0.1.2</tag>
+		<tag>HEAD</tag>
   </scm>
 
 	<dependencies>
