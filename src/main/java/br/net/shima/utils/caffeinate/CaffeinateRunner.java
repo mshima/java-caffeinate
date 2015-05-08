@@ -1,11 +1,13 @@
 package br.net.shima.utils.caffeinate;
 
 import java.io.IOException;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.logging.Logger;
 
+import org.apache.commons.lang3.time.DateFormatUtils;
 import org.apache.commons.lang3.time.DateUtils;
 
 public class CaffeinateRunner {
@@ -15,14 +17,17 @@ public class CaffeinateRunner {
 	private static final int DEFAULT_TIMEOUT = 10;
 	private static final int MEDIUM_TIMEOUT = 30;
 
-	private static Logger logger = Logger.getLogger(CaffeinateRunner.class.getName());
+	private static final String CANCELABLE_COMMAND = "caffeinate -s -t 3600";
+
+	private static final Logger logger = Logger.getLogger(CaffeinateRunner.class.getName());
+
+	private final String source;
 
 	private Process runningProcess;
 	private Date runningProcessUntil;
-
 	private boolean processRunning = false;
 
-	private Map<String, Process> processes;
+	private final Map<String, Process> processes;
 
 	//	Available options:
 	//
@@ -44,6 +49,13 @@ public class CaffeinateRunner {
 	//	             with this command.
 
 	public CaffeinateRunner() {
+		this.source = "Unknown";
+		this.processes = new HashMap<String, Process>();
+	}
+
+	public CaffeinateRunner(String source) {
+		this.source = source;
+		this.processes = new HashMap<String, Process>();
 	}
 
 	public boolean caffeinate() {
@@ -71,33 +83,42 @@ public class CaffeinateRunner {
 	}
 
 	private boolean caffeinate(boolean seconds, int timeout) {
-		Date newUntil = DateUtils.addMinutes(new Date(), timeout);
+		Date newUntil;
+		if(!seconds){
+			newUntil = DateUtils.addMinutes(new Date(), timeout);
+			newUntil = DateUtils.ceiling(newUntil, Calendar.MINUTE);
+		}else{
+			newUntil = DateUtils.addSeconds(new Date(), timeout);
+		}
 		if(processRunning && runningProcessUntil != null && runningProcessUntil.after(newUntil)){
+			logger.fine(this.source + ": Caffeinate already running");
 			return true;
 		}
 
 		try{
 			if(!seconds){
 				timeout = timeout * 60;
-				logger.info("Starting caffeinate -s -t " + timeout + " minutes");
-			}else{
-				logger.info("Starting caffeinate -s -t " + timeout + " seconds");
 			}
-			Process exec = Runtime.getRuntime().exec("caffeinate -s -t " + timeout);
-			this.processRunning = true;
+			String command = "caffeinate -s -t " + timeout;
+			logger.info(this.source + ": Starting " + command + " until " + DateFormatUtils.ISO_TIME_NO_T_FORMAT.format(newUntil));
+			Process exec = Runtime.getRuntime().exec(command);
 
-			if(runningProcess != null){
-				runningProcess.destroy();
-				try {
-					runningProcess.waitFor();
-				} catch (InterruptedException e) {
+			synchronized (this) {
+				this.processRunning = true;
+
+				if(runningProcess != null){
+					runningProcess.destroy();
+					try {
+						runningProcess.waitFor();
+					} catch (InterruptedException e) {
+					}
 				}
+
+				new Thread(new CaffeinateNotifier(this, exec, newUntil)).run();
+
+				runningProcess = exec;
+				runningProcessUntil = newUntil;
 			}
-
-			new Thread(new CaffeinateNotifier(this, exec)).run();
-
-			runningProcess = exec;
-			runningProcessUntil = newUntil;
 			return true;
 
 		} catch (IOException e) {
@@ -107,72 +128,125 @@ public class CaffeinateRunner {
 	}
 
 	public boolean cancelableCaffeinate(String name) {
-		if(processes == null){
-			processes = new HashMap<String, Process>();
-		}
-		if(processes.containsKey(name)){
+		if(this.processes == null){
 			return false;
 		}
-		try{
-			Runtime r = Runtime.getRuntime();
-			logger.info("Starting caffeinate -s -t 3600");
-			processes.put(name, r.exec("caffeinate -s -t 3600"));
-			return true;
+		synchronized (this.processes) {
+			if(this.processes.containsKey(name)){
+				return false;
+			}
+			try{
+				Runtime r = Runtime.getRuntime();
+				String command = CANCELABLE_COMMAND;
+				logger.info(this.source + ": Starting cancelable (" + name + ") " + command);
+				this.processes.put(name, r.exec(command));
+				return true;
 
-		} catch (IOException e) {
-			e.printStackTrace();
-			return false;
+			} catch (IOException e) {
+				e.printStackTrace();
+				return false;
+			}
 		}
 	}
 
 	public void waitFor(String name) throws InterruptedException {
-		if(processes == null || !processes.containsKey(name)){
+		if(this.processes == null || !this.processes.containsKey(name)){
 			return;
 		}
-		processes.get(name).waitFor();
+		this.processes.get(name).waitFor();
 	}
 
 	public boolean cancel(String name) {
-		if(processes == null || !processes.containsKey(name)){
+		if(this.processes == null){
 			return false;
 		}
-		synchronized (this) {
-			Process currentProcess = processes.get(name);
+		synchronized (this.processes) {
+			if(!this.processes.containsKey(name)){
+				return false;
+			}
+			Process currentProcess = this.processes.get(name);
 			if(currentProcess != null){
+				logger.info(this.source + ": Stoping cancelable (" + name + ")");
 				currentProcess.destroy();
 				try {
 					currentProcess.waitFor();
 				} catch (InterruptedException e) {
 				}
-				processes.remove(name);
+				this.processes.remove(name);
+			}else{
+				logger.fine(this.source + ": Cancelable not running (" + name + ")");
 			}
 		}
 		return true;
 	}
 
-	private void setProcessNotRunning(int status) {
-		this.processRunning = false;
-		logger.info("Caffeinate exited");
+	private void setProcessNotRunning(CaffeinateNotifier caffeinateNotifier, int status, Date until) {
+		synchronized (this) {
+			if(this.runningProcess == caffeinateNotifier.getProcess()){
+				this.processRunning = false;
+			}
+		}
+		logger.info("Caffeinate exited (" + status + ") was until " + DateFormatUtils.ISO_TIME_NO_T_FORMAT.format(until));
+	}
+
+	private void setCancelableProcessNotRunning(CancelableCaffeinateNotifier caffeinateNotifier, int status, String name) {
+		synchronized (this.processes) {
+			this.processes.remove(name);
+		}
+		logger.info("Caffeinate exited (" + status + ") with name " + name);
 	}
 
 	public static class CaffeinateNotifier implements Runnable
 	{
 		private final CaffeinateRunner thread;
-		private final Process p;
+		private final Process process;
+		private final Date until;
 
-		public CaffeinateNotifier(CaffeinateRunner thread, Process p) {
+		public CaffeinateNotifier(CaffeinateRunner thread, Process process, Date until) {
 			this.thread = thread;
-			this.p = p;
+			this.process = process;
+			this.until = until;
 		}
 
 		@Override
 		public void run() {
 			int status = -1;
 			try {
-				status = p.waitFor();
+				status = getProcess().waitFor();
 			} catch (InterruptedException e) {
 			}
-			this.thread.setProcessNotRunning(status);
+			this.thread.setProcessNotRunning(this, status, this.until);
+		}
+
+		public Process getProcess() {
+			return this.process;
+		}
+	}
+
+	public static class CancelableCaffeinateNotifier implements Runnable
+	{
+		private final CaffeinateRunner thread;
+		private final Process process;
+		private final String name;
+
+		public CancelableCaffeinateNotifier(CaffeinateRunner thread, Process process, String name) {
+			this.thread = thread;
+			this.process = process;
+			this.name = name;
+		}
+
+		@Override
+		public void run() {
+			int status = -1;
+			try {
+				status = getProcess().waitFor();
+			} catch (InterruptedException e) {
+			}
+			this.thread.setCancelableProcessNotRunning(this, status, this.name);
+		}
+
+		public Process getProcess() {
+			return this.process;
 		}
 	}
 }
