@@ -114,7 +114,7 @@ public class CaffeinateRunner {
 					}
 				}
 
-				new Thread(new CaffeinateNotifier(this, exec, newUntil)).run();
+				new Thread(new CaffeinateWatcher(this, exec)).run();
 
 				runningProcess = exec;
 				runningProcessUntil = newUntil;
@@ -180,73 +180,19 @@ public class CaffeinateRunner {
 		return true;
 	}
 
-	private void setProcessNotRunning(CaffeinateNotifier caffeinateNotifier, int status, Date until) {
+	void setProcessNotRunning(CaffeinateWatcher caffeinateNotifier, int status) {
 		synchronized (this) {
 			if(this.runningProcess == caffeinateNotifier.getProcess()){
 				this.processRunning = false;
 			}
 		}
-		logger.info("Caffeinate exited (" + status + ") was until " + DateFormatUtils.ISO_TIME_NO_T_FORMAT.format(until));
+		logger.info("Caffeinate exited (" + status + ")");
 	}
 
-	private void setCancelableProcessNotRunning(CancelableCaffeinateNotifier caffeinateNotifier, int status, String name) {
+	void setCancelableProcessNotRunning(CancelableCaffeinateWatcher caffeinateNotifier, int status, String name) {
 		synchronized (this.processes) {
 			this.processes.remove(name);
 		}
 		logger.info("Caffeinate exited (" + status + ") with name " + name);
-	}
-
-	public static class CaffeinateNotifier implements Runnable
-	{
-		private final CaffeinateRunner thread;
-		private final Process process;
-		private final Date until;
-
-		public CaffeinateNotifier(CaffeinateRunner thread, Process process, Date until) {
-			this.thread = thread;
-			this.process = process;
-			this.until = until;
-		}
-
-		@Override
-		public void run() {
-			int status = -1;
-			try {
-				status = getProcess().waitFor();
-			} catch (InterruptedException e) {
-			}
-			this.thread.setProcessNotRunning(this, status, this.until);
-		}
-
-		public Process getProcess() {
-			return this.process;
-		}
-	}
-
-	public static class CancelableCaffeinateNotifier implements Runnable
-	{
-		private final CaffeinateRunner thread;
-		private final Process process;
-		private final String name;
-
-		public CancelableCaffeinateNotifier(CaffeinateRunner thread, Process process, String name) {
-			this.thread = thread;
-			this.process = process;
-			this.name = name;
-		}
-
-		@Override
-		public void run() {
-			int status = -1;
-			try {
-				status = getProcess().waitFor();
-			} catch (InterruptedException e) {
-			}
-			this.thread.setCancelableProcessNotRunning(this, status, this.name);
-		}
-
-		public Process getProcess() {
-			return this.process;
-		}
 	}
 }
